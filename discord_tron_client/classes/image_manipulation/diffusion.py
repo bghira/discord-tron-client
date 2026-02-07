@@ -29,20 +29,73 @@ from diffusers import (
     FluxPipeline,
 )
 from diffusers.models.attention_processor import AttnProcessor2_0
-from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.pixart import (
-    PixArtSigmaPipeline,
-)
+import torch, gc, logging, diffusers, transformers, os, time, psutil
+
+logger = logging.getLogger("DiffusionPipelineManager")
+logger.setLevel("DEBUG")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.pixart import (
+        PixArtSigmaPipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.z_image import (
+        ZImagePipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.stable_cascade.pipeline_combined import (
+        StableCascadeCombinedPipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.ace_step.pipeline import (
+        ACEStepPipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.flux2.pipeline import (
+        Flux2Pipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.kandinsky5_image.pipeline_kandinsky5_t2i import (
+        Kandinsky5T2IPipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.kandinsky5_video.pipeline_kandinsky5_t2v import (
+        Kandinsky5T2VPipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.cosmos.pipeline import (
+        Cosmos2TextToImagePipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+try:
+    from discord_tron_client.classes.image_manipulation.pipeline_runners.overrides.wan.pipeline import (
+        WanPipeline,
+    )
+except Exception as e:
+    logging.error(f"Could not import dependency: {e}")
+from diffusers import Lumina2Pipeline, OmniGenPipeline
 from diffusers import DiffusionPipeline as Pipeline
 from typing import Dict
 from discord_tron_client.classes.hardware import HardwareInfo
 from discord_tron_client.classes.app_config import AppConfig
 from PIL import Image
-import torch, gc, logging, diffusers, transformers, os, time, psutil
 from torch import OutOfMemoryError
 import json
 
-logger = logging.getLogger("DiffusionPipelineManager")
-logger.setLevel("DEBUG")
 if not torch.backends.mps.is_available():
     torch.backends.cudnn.deterministic = False
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -119,6 +172,16 @@ class DiffusionPipelineManager:
         "text2img": DiffusionPipeline,
         "sana": SanaPipeline,
         "pixart": PixArtSigmaPipeline,
+        "z_image": ZImagePipeline,
+        "stable_cascade": StableCascadeCombinedPipeline,
+        "ace_step": ACEStepPipeline,
+        "flux2": Flux2Pipeline,
+        "kandinsky5_image": Kandinsky5T2IPipeline,
+        "kandinsky5_video": Kandinsky5T2VPipeline,
+        "cosmos": Cosmos2TextToImagePipeline,
+        "wan": WanPipeline,
+        "lumina2": Lumina2Pipeline,
+        "omnigen": OmniGenPipeline,
         "kandinsky-2.2": KandinskyV22CombinedPipeline,
         "prompt_variation": LTXImageToVideoPipeline,
         "variation": StableDiffusionPipeline,
@@ -403,6 +466,7 @@ class DiffusionPipelineManager:
         if "sana" in model_id.lower():
             print("Using Sana pipeline class.")
             pipeline_class = self.PIPELINE_CLASSES["sana"]
+        pipeline_dtype = torch.bfloat16 if pipe_type == "z_image" else self.torch_dtype
 
         extra_args = {
             "feature_extractor": None,
@@ -416,12 +480,12 @@ class DiffusionPipelineManager:
         if pipe_type in ["variation", "upscaler"]:
             logger.debug(f"Creating a ControlNet model for {model_id}")
             controlnet = ControlNetModel.from_pretrained(
-                "lllyasviel/control_v11f1e_sd15_tile", torch_dtype=self.torch_dtype
+                "lllyasviel/control_v11f1e_sd15_tile", torch_dtype=pipeline_dtype
             )
             logger.debug(f"StableDiffusionControlNetPipeline for {model_id}")
             pipeline = pipeline_class.from_pretrained(
                 model_id,
-                torch_dtype=self.torch_dtype,
+                torch_dtype=pipeline_dtype,
                 custom_pipeline="stable_diffusion_controlnet_img2img",
                 controlnet=controlnet,
                 use_safetensors=use_safetensors,
@@ -431,7 +495,7 @@ class DiffusionPipelineManager:
             logger.debug(f"Creating a prompt_variation pipeline for {model_id}")
             pipeline = pipeline_class.from_pretrained(
                 model_id,
-                torch_dtype=self.torch_dtype,
+                torch_dtype=pipeline_dtype,
                 use_safetensors=use_safetensors,
                 **extra_args,
             )
@@ -441,7 +505,7 @@ class DiffusionPipelineManager:
             logger.debug(f"Creating a txt2img pipeline for {model_id}")
             pipeline = pipeline_class.from_pretrained(
                 model_id,
-                torch_dtype=self.torch_dtype,
+                torch_dtype=pipeline_dtype,
                 use_safetensors=use_safetensors,
                 use_auth_token=config.get_huggingface_api_key(),
                 variant=config.get_config_value("model_default_variant", None),
@@ -452,7 +516,7 @@ class DiffusionPipelineManager:
             logger.debug(f"Using standard pipeline for {model_id}")
             pipeline = pipeline_class.from_pretrained(
                 model_id,
-                torch_dtype=self.torch_dtype,
+                torch_dtype=pipeline_dtype,
                 use_safetensors=use_safetensors,
                 use_auth_token=config.get_huggingface_api_key(),
                 **extra_args,
@@ -596,6 +660,40 @@ class DiffusionPipelineManager:
                 else "upscaler" if upscaler else "text2img"
             )
         )
+        model_id_lower = model_id.lower()
+        if (
+            "z-image" in model_id_lower
+            or "zimage" in model_id_lower
+            or "z_image" in model_id_lower
+        ):
+            pipe_type = "z_image"
+        elif "stable-cascade" in model_id_lower or "cascade" in model_id_lower:
+            pipe_type = "stable_cascade"
+        elif (
+            "ace-step" in model_id_lower
+            or "acestep" in model_id_lower
+            or "ace_step" in model_id_lower
+        ):
+            pipe_type = "ace_step"
+        elif "flux.2" in model_id_lower or "flux2" in model_id_lower:
+            pipe_type = "flux2"
+        elif "kandinsky5" in model_id_lower or "kandinsky-5" in model_id_lower:
+            if (
+                "video" in model_id_lower
+                or "t2v" in model_id_lower
+                or "i2v" in model_id_lower
+            ):
+                pipe_type = "kandinsky5_video"
+            else:
+                pipe_type = "kandinsky5_image"
+        elif "cosmos" in model_id_lower:
+            pipe_type = "cosmos"
+        elif "wan" in model_id_lower:
+            pipe_type = "wan"
+        elif "lumina" in model_id_lower:
+            pipe_type = "lumina2"
+        elif "omnigen" in model_id_lower:
+            pipe_type = "omnigen"
         if "kandinsky-2-2" in model_id:
             use_safetensors = False
             pipe_type = "kandinsky-2.2"
